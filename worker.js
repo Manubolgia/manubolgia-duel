@@ -486,6 +486,17 @@ export class GameRoom {
       return new Response('ok');
     }
 
+    if (url.pathname === '/close') {
+      const room = await this.load();
+      if (!room) return new Response('gone');
+      const token = url.searchParams.get('token') || '';
+      if (!room.seats.some((s) => s.token === token)) {
+        return new Response('forbidden', { status: 403 });
+      }
+      await this.teardown();
+      return new Response('ok');
+    }
+
     if (url.pathname === '/ws') {
       if (request.headers.get('Upgrade') !== 'websocket') {
         return new Response('Expected WebSocket', { status: 426 });
@@ -574,16 +585,20 @@ export class GameRoom {
       await this.save();
       this.broadcast();
     } else if (msg.t === 'leave') {
-      // Explicitly tear down the room for a clean game cycle: tell every
-      // connected client the room closed, drop the state, and close sockets.
-      for (const sock of this.state.getWebSockets()) {
-        try { sock.send(JSON.stringify({ t: 'closed' })); } catch {}
-      }
-      this.room = null;
-      await this.state.storage.delete('room');
-      for (const sock of this.state.getWebSockets()) {
-        try { sock.close(1000, 'room closed'); } catch {}
-      }
+      await this.teardown();
+    }
+  }
+
+  // Tear down the room: tell every connected client the room closed,
+  // drop the state, and close sockets.
+  async teardown() {
+    for (const sock of this.state.getWebSockets()) {
+      try { sock.send(JSON.stringify({ t: 'closed' })); } catch {}
+    }
+    this.room = null;
+    await this.state.storage.delete('room');
+    for (const sock of this.state.getWebSockets()) {
+      try { sock.close(1000, 'room closed'); } catch {}
     }
   }
 
@@ -637,6 +652,22 @@ export default {
       }
       return new Response(JSON.stringify({ error: 'Could not allocate a room.' }), {
         status: 503,
+        headers: { 'Content-Type': 'application/json', ...CORS },
+      });
+    }
+
+    if (url.pathname === '/api/close' && request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const code = String(body.code || '').toUpperCase();
+      if (!/^[A-Z]{4}$/.test(code)) {
+        return new Response(JSON.stringify({ error: 'Bad code.' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+      const stub = env.ROOM.get(env.ROOM.idFromName(code));
+      const res = await stub.fetch('https://room/close?token=' + encodeURIComponent(body.token || ''), { method: 'POST' });
+      return new Response(JSON.stringify({ ok: res.ok }), {
         headers: { 'Content-Type': 'application/json', ...CORS },
       });
     }
