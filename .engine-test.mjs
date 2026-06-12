@@ -1,15 +1,7 @@
 // Throwaway engine test: plays random legal games to completion.
 
-import * as fs from 'fs';
-
-// Re-import internals by evaluating the module source with exports exposed.
-const src = fs.readFileSync('./worker.js', 'utf8');
-const mod = await import('data:text/javascript,' + encodeURIComponent(
-  src + '\nexport { newGame, applyAction, publicState, lineOK, computePayment, COLORS };'
-));
-const { newGame, applyAction, publicState, lineOK } = mod;
-
-const COLORS = ['w', 'u', 'g', 'r', 'k'];
+import './engine.js';
+const { newGame, applyAction, publicState, lineOK, computePayment, COLORS } = globalThis.SplendorEngine;
 const rnd = (n) => Math.floor(Math.random() * n);
 const pick = (a) => a[rnd(a.length)];
 
@@ -50,12 +42,12 @@ function legalActions(st) {
     st.open[tier].forEach((card, idx) => {
       if (!card) return;
       if (card.b === 'x' && !COLORS.some((c) => me.bonus[c] > 0)) return;
-      if (mod.computePayment(me, card)) acts.push({ type: 'buy', kind: 'open', tier, idx });
+      if (computePayment(me, card)) acts.push({ type: 'buy', kind: 'open', tier, idx });
     });
   }
   me.reserved.forEach((card, idx) => {
     if (card.b === 'x' && !COLORS.some((c) => me.bonus[c] > 0)) return;
-    if (mod.computePayment(me, card)) acts.push({ type: 'buy', kind: 'reserved', idx });
+    if (computePayment(me, card)) acts.push({ type: 'buy', kind: 'reserved', idx });
   });
   // reserve
   if (me.reserved.length < 3 && st.board.includes('o')) {

@@ -242,6 +242,7 @@
   #sheet { background: linear-gradient(180deg, #1a2029, #12161f); border-radius: 20px 20px 0 0;
            width: 100%; max-width: 460px; position: relative;
            padding: 22px 18px calc(var(--sab) + 18px);
+           max-height: 86dvh; overflow-y: auto; overscroll-behavior: contain;
            border-top: 1px solid var(--line2); box-shadow: 0 -8px 30px rgba(0, 0, 0, .5); }
   #sheet::before { content: ''; position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
            width: 40px; height: 3px; border-radius: 2px; background: rgba(217, 184, 108, .35); }
@@ -259,6 +260,12 @@
           background: radial-gradient(circle at 32% 24%, rgba(255, 255, 255, .45), rgba(255, 255, 255, 0) 38%); }
   .pick:active { transform: scale(.92); }
   .pick:disabled { opacity: .25; }
+
+  /* market reference inside pending-choice sheets: see what you can build
+     while deciding what to steal / discard / assign */
+  .refbox { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 2px; }
+  .refbox .seclabel { margin-top: 10px; }
+  .refbox .card { pointer-events: none; }
 
   #toast { position: fixed; left: 50%; bottom: calc(var(--sab) + 24px); transform: translateX(-50%) translateY(20px);
            background: #2c1f1f; color: #ffb4b4; border: 1px solid #5a3030; padding: 10px 18px; border-radius: 12px;
@@ -301,6 +308,10 @@
               border-color: rgba(255, 236, 190, .5); }
   .rdel { flex: none; font-size: 15px; font-weight: 700; padding: 8px 12px; color: var(--bad); }
   .rdel:active { transform: scale(.9); }
+  .rbadge { display: inline-block; font-size: 9px; font-weight: 800; letter-spacing: 1px;
+            text-transform: uppercase; padding: 2px 6px; border-radius: 6px; vertical-align: 1px;
+            border: 1px solid var(--line2); color: var(--gold); }
+  .rbadge.ai { border-color: rgba(165, 200, 245, .5); color: #9cc3ef; }
 
   /* ---------- Rulebook ---------- */
   #rules { min-height: 100dvh; max-width: 460px; margin: 0 auto;
@@ -377,6 +388,9 @@
   <div class="or">— or join a game —</div>
   <input id="joinCode" class="field" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">
   <button id="joinBtn" class="btn blue">Join Game</button>
+  <div class="or">— play offline —</div>
+  <button id="aiBtn" class="btn">Play vs Computer</button>
+  <button id="passBtn" class="btn">Pass &amp; Play (2 players)</button>
   <div id="roomsWrap">
     <div class="or">— your games —</div>
     <div id="roomsList" style="display:flex;flex-direction:column;gap:8px"></div>
@@ -437,6 +451,14 @@
   <button class="btn" id="lobbyLeave" style="max-width:200px">Leave</button>
 </div>
 
+<!-- pass-and-play handoff overlay -->
+<div class="bigover" id="passOver">
+  <div class="logo"><span class="orn">◆</span>PASS THE DEVICE<span class="orn">◆</span></div>
+  <div class="tagline">It's time to hand over</div>
+  <div style="font-size:26px;font-weight:800" id="passName"></div>
+  <button class="btn primary" id="passGo" style="max-width:240px">Show my turn</button>
+</div>
+
 <!-- win overlay -->
 <div class="bigover" id="winOver">
   <svg class="wincrown"><use href="#i-crown"/></svg>
@@ -458,6 +480,7 @@
 
 <div id="toast"></div>
 
+<script src="engine.js"></script>
 <script>
 'use strict';
 // ============================================================================
@@ -482,11 +505,20 @@ const $ = (id) => document.getElementById(id);
 // ---------------------------------------------------------------------------
 // Connection
 // ---------------------------------------------------------------------------
+const E = window.SplendorEngine; // shared rules engine + AI (engine.js)
+
 let ws = null, code = null, mySeat = null, S = null, names = [], present = [];
 let sel = [];                 // selected board cells for "take"
 let privMode = false;         // next board tap spends a privilege
 let wantReconnect = false;
 let leaving = false;          // true while we are tearing down our own room
+
+// Offline games (vs AI / pass-and-play) — engine runs right here, state in
+// localStorage, no network needed.
+let local = null;             // { id, mode:'ai'|'pass', diff, names, st }
+let viewSeat = 0;             // seat whose perspective is rendered
+let handoff = false;          // pass mode: waiting for the device to change hands
+let aiTimer = null;
 
 function wsURL(c) {
   return WORKER_URL.replace(/^http/, 'ws') + '/ws/' + c;
@@ -551,7 +583,7 @@ function connect(c) {
 }
 
 function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
-function act(action) { send({ t: 'action', action }); }
+function act(action) { if (local) localAct(action); else send({ t: 'action', action }); }
 
 function showGame() {
   $('home').classList.remove('on');
@@ -566,9 +598,11 @@ function goHome() {
   wantReconnect = false;
   if (ws) ws.close();
   ws = null; S = null; mySeat = null; code = null; sel = []; privMode = false; leaving = false;
+  local = null; viewSeat = 0; handoff = false; clearTimeout(aiTimer);
   $('game').classList.remove('on');
   $('lobby').classList.remove('on');
   $('winOver').classList.remove('on');
+  $('passOver').classList.remove('on');
   $('home').classList.add('on');
   history.replaceState(null, '', '#');
   renderRooms();
@@ -597,25 +631,51 @@ function removeRoom(c) {
 }
 
 function renderRooms() {
-  const rooms = Object.entries(loadRooms()).sort((a, b) => b[1].updated - a[1].updated);
-  $('roomsWrap').style.display = rooms.length ? 'flex' : 'none';
-  $('roomsList').innerHTML = rooms.map(([c, r]) => {
-    const badge = r.over ? '<span class="rturn">finished</span>'
-      : r.turn === 'me' ? '<span class="rturn me">your turn</span>'
-      : r.turn === 'them' ? '<span class="rturn">their turn</span>'
-      : '<span class="rturn">waiting</span>';
+  const remote = Object.entries(loadRooms()).map(([c, r]) => ({ key: c, kind: 'remote', updated: r.updated || 0, r }));
+  const locals = Object.entries(loadLocals()).map(([id, g]) => ({ key: id, kind: 'local', updated: g.updated || 0, g }));
+  const items = [...remote, ...locals].sort((a, b) => b.updated - a.updated);
+  $('roomsWrap').style.display = items.length ? 'flex' : 'none';
+  $('roomsList').innerHTML = items.map((it) => {
+    if (it.kind === 'remote') {
+      const r = it.r;
+      const badge = r.over ? '<span class="rturn">finished</span>'
+        : r.turn === 'me' ? '<span class="rturn me">your turn</span>'
+        : r.turn === 'them' ? '<span class="rturn">their turn</span>'
+        : '<span class="rturn">waiting</span>';
+      return `<div class="roomitem">
+        <button class="rinfo" data-join="${it.key}">
+          <div class="rvs">${r.opp ? 'vs ' + esc(r.opp) : 'Waiting for opponent'}</div>
+          <div class="rmeta"><span class="rcode">${it.key}</span> · online</div>
+        </button>${badge}
+        <button class="rdel" data-del="${it.key}">✕</button>
+      </div>`;
+    }
+    const g = it.g;
+    const over = g.st.phase === 'over';
+    const tag = g.mode === 'ai' ? '<span class="rbadge ai">AI</span>' : '<span class="rbadge">pass &amp; play</span>';
+    const badge = over ? '<span class="rturn">finished</span>'
+      : g.mode === 'ai'
+        ? (g.st.turn === 0 ? '<span class="rturn me">your turn</span>' : '<span class="rturn">AI turn</span>')
+        : `<span class="rturn me">${esc(g.names[g.st.turn])}</span>`;
+    const label = g.mode === 'ai' ? 'vs ' + esc(g.names[1]) : esc(g.names[0]) + ' vs ' + esc(g.names[1]);
     return `<div class="roomitem">
-      <button class="rinfo" data-join="${c}">
-        <div class="rvs">${r.opp ? 'vs ' + esc(r.opp) : 'Waiting for opponent'}</div>
-        <div class="rmeta"><span class="rcode">${c}</span></div>
+      <button class="rinfo" data-local="${it.key}">
+        <div class="rvs">${label} ${tag}</div>
+        <div class="rmeta">offline · on this device</div>
       </button>${badge}
-      <button class="rdel" data-del="${c}">✕</button>
+      <button class="rdel" data-dellocal="${it.key}">✕</button>
     </div>`;
   }).join('');
   $('roomsList').querySelectorAll('[data-join]').forEach((b) =>
     b.addEventListener('click', () => connect(b.dataset.join)));
   $('roomsList').querySelectorAll('[data-del]').forEach((b) =>
     b.addEventListener('click', () => deleteRoom(b.dataset.del)));
+  $('roomsList').querySelectorAll('[data-local]').forEach((b) =>
+    b.addEventListener('click', () => openLocal(b.dataset.local)));
+  $('roomsList').querySelectorAll('[data-dellocal]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (confirm('Delete this offline game?')) removeLocal(b.dataset.dellocal);
+    }));
 }
 
 async function deleteRoom(c) {
@@ -630,6 +690,158 @@ async function deleteRoom(c) {
     });
   } catch {}
 }
+
+// ---------------------------------------------------------------------------
+// Offline games: vs AI or pass-and-play. The engine from engine.js runs in
+// the browser; full game state is persisted in localStorage so games survive
+// leaving, closing the app, and being offline.
+// ---------------------------------------------------------------------------
+function loadLocals() {
+  try { return JSON.parse(localStorage.getItem('sd-local')) || {}; } catch { return {}; }
+}
+function saveLocals(o) { localStorage.setItem('sd-local', JSON.stringify(o)); }
+
+function saveLocal() {
+  if (!local) return;
+  const all = loadLocals();
+  all[local.id] = { mode: local.mode, diff: local.diff, names: local.names, st: local.st, updated: Date.now() };
+  saveLocals(all);
+}
+
+function removeLocal(id) {
+  const all = loadLocals();
+  delete all[id];
+  saveLocals(all);
+  renderRooms();
+}
+
+function startLocal(mode, diff, names) {
+  const id = 'L' + Math.random().toString(36).slice(2, 8).toUpperCase();
+  const first = Math.random() < 0.5 ? 0 : 1;
+  const all = loadLocals();
+  all[id] = { mode, diff, names, st: E.newGame(names, first), updated: Date.now() };
+  saveLocals(all);
+  openLocal(id);
+}
+
+function openLocal(id) {
+  const rec = loadLocals()[id];
+  if (!rec) return;
+  local = { id, mode: rec.mode, diff: rec.diff, names: rec.names, st: rec.st };
+  code = null; sel = []; privMode = false;
+  if (local.mode === 'pass') {
+    viewSeat = local.st.turn;
+    handoff = local.st.phase === 'playing'; // announce whose turn before revealing
+  } else {
+    viewSeat = 0;
+    handoff = false;
+  }
+  $('home').classList.remove('on');
+  $('rules').classList.remove('on');
+  $('game').classList.add('on');
+  $('codeChip').textContent = local.mode === 'ai' ? 'AI · ' + local.diff.toUpperCase() : 'PASS & PLAY';
+  history.replaceState(null, '', '#');
+  renderLocal();
+  maybeAITurn();
+}
+
+function renderLocal() {
+  if (!local) return;
+  mySeat = viewSeat;
+  names = local.names;
+  present = [0, 1];
+  S = E.publicState(local.st, viewSeat);
+  render();
+  renderPass();
+}
+
+function localAct(a) {
+  const prevTurn = local.st.turn;
+  const err = E.applyAction(local.st, viewSeat, a);
+  if (err) { toast(err, false); return; }
+  saveLocal();
+  if (local.mode === 'pass' && local.st.phase === 'playing' && local.st.turn !== prevTurn) handoff = true;
+  renderLocal();
+  maybeAITurn();
+}
+
+// The AI always sits in seat 1. Plays with a small "thinking" delay; one call
+// per action, so multi-step turns (privileges, pendings, play-again) chain.
+function maybeAITurn() {
+  if (!local || local.mode !== 'ai') return;
+  clearTimeout(aiTimer);
+  if (local.st.phase !== 'playing' || local.st.turn !== 1) return;
+  aiTimer = setTimeout(() => {
+    if (!local || local.mode !== 'ai' || local.st.phase !== 'playing' || local.st.turn !== 1) return;
+    const a = E.aiAction(local.st, 1, local.diff);
+    const err = a ? E.applyAction(local.st, 1, a) : 'no move found';
+    if (err) {
+      // Safety net so a bad AI move can never wedge the game.
+      if (E.applyAction(local.st, 1, { type: 'replenish' })) {
+        console.warn('AI stuck:', err);
+        return;
+      }
+    }
+    saveLocal();
+    renderLocal();
+    maybeAITurn();
+  }, 700 + Math.random() * 600);
+}
+
+// Pass-and-play: opaque hand-off screen between turns so reserved deck cards
+// stay private.
+function renderPass() {
+  const show = !!local && local.mode === 'pass' && handoff && local.st.phase === 'playing';
+  $('passOver').classList.toggle('on', show);
+  if (show) {
+    $('passName').textContent = local.names[local.st.turn];
+    closeSheet(); // pending choices belong to the next player
+  }
+}
+$('passGo').addEventListener('click', () => {
+  if (!local) return;
+  handoff = false;
+  viewSeat = local.st.turn;
+  renderLocal();
+});
+
+const aiName = (d) => 'AI (' + d.charAt(0).toUpperCase() + d.slice(1) + ')';
+
+$('aiBtn').addEventListener('click', () => {
+  const name = ($('name').value || '').trim() || 'You';
+  if ($('name').value.trim()) localStorage.setItem('sd-name', name);
+  openSheet(`<h3>Play vs Computer</h3>
+    <div style="font-size:13px;color:var(--dim);margin-bottom:10px">Runs on this device — works offline. Choose a difficulty:</div>
+    <div class="sheetbtns">
+      <button class="btn" data-diff="easy">Easy</button>
+      <button class="btn blue" data-diff="medium">Medium</button>
+      <button class="btn primary" data-diff="hard">Hard</button>
+      <button class="btn" id="shCancel">Cancel</button>
+    </div>`);
+  $('shCancel').addEventListener('click', closeSheet);
+  $('sheet').querySelectorAll('[data-diff]').forEach((b) =>
+    b.addEventListener('click', () => {
+      closeSheet();
+      startLocal('ai', b.dataset.diff, [name, aiName(b.dataset.diff)]);
+    }));
+});
+
+$('passBtn').addEventListener('click', () => {
+  const p1 = ($('name').value || '').trim() || 'Player 1';
+  openSheet(`<h3>Pass &amp; Play</h3>
+    <div style="font-size:13px;color:var(--dim);margin-bottom:10px">Two players, one device — pass it between turns. Works offline.</div>
+    <input id="p2name" class="field" maxlength="16" placeholder="Player 2 name" autocomplete="off" style="margin-bottom:12px">
+    <div class="sheetbtns">
+      <button class="btn primary" id="passStart">Start</button>
+      <button class="btn" id="shCancel">Cancel</button>
+    </div>`);
+  $('shCancel').addEventListener('click', closeSheet);
+  $('passStart').addEventListener('click', () => {
+    const p2 = ($('p2name').value || '').trim() || 'Player 2';
+    closeSheet();
+    startLocal('pass', null, [p1, p2]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Rules mirrors (UX hints only — the server is authoritative)
@@ -823,7 +1035,21 @@ function closeRoom() {
     goHome();
   }
 }
-$('rematchBtn').addEventListener('click', () => send({ t: 'rematch' }));
+$('rematchBtn').addEventListener('click', () => {
+  if (local) {
+    // Same as online: whoever went first last game goes second now.
+    local.st = E.newGame(local.names, 1 - local.st.firstSeat);
+    sel = []; privMode = false;
+    if (local.mode === 'pass') { viewSeat = local.st.turn; handoff = true; }
+    else viewSeat = 0;
+    saveLocal();
+    $('winOver').classList.remove('on');
+    renderLocal();
+    maybeAITurn();
+  } else {
+    send({ t: 'rematch' });
+  }
+});
 $('overlay').addEventListener('click', (e) => { if (e.target.id === 'overlay' && !pendingLocked) closeSheet(); });
 
 // ---------------------------------------------------------------------------
@@ -878,6 +1104,23 @@ function openDeckSheet(tier) {
 // ---------------------------------------------------------------------------
 let discardSel = null;
 
+// Compact view of everything buyable — shown inside pending-choice sheets so
+// you can steal/discard/assign with the market in front of you instead of
+// from memory. Affordable cards keep their green glow.
+function refMarketHTML() {
+  const me = S.players[mySeat];
+  const row = (cards) => `<div class="cardrow">` + cards.map((c) => {
+    if (!c) return '';
+    const aff = !c.hidden && canAfford(me, c) ? 'afford' : '';
+    return cardHTML(c).replace('class="card', `class="card ${aff}`);
+  }).join('') + `</div>`;
+  const res = me.reserved.length
+    ? `<div class="seclabel"><span>Your reserved</span></div>` + row(me.reserved) : '';
+  return `<div class="refbox">${res}
+    <div class="seclabel"><span>Cards on the table</span></div>
+    ${row(S.open[3])}${row(S.open[2])}${row(S.open[1])}</div>`;
+}
+
 function renderPending() {
   const p = pend();
   if (!p || S.turn !== mySeat) {
@@ -893,15 +1136,19 @@ function renderPending() {
       `<button class="pick t-${c}" data-c="${c}" ${me.bonus[c] ? '' : 'disabled'}>${me.bonus[c] || ''}</button>`).join('');
     openSheet(`<h3>Wild card — choose its color</h3>
       <div style="font-size:13px;color:var(--dim);margin-bottom:8px">It permanently counts as that color (${p.pts} pts).</div>
-      <div class="pickrow">${picks}</div>`);
+      <div class="pickrow">${picks}</div>${refMarketHTML()}`);
     $('sheet').querySelectorAll('.pick').forEach((b) =>
       b.addEventListener('click', () => act({ type: 'resolve', resolve: { type: 'color', color: b.dataset.c } })));
   } else if (p.type === 'steal') {
+    const any = [...COLORS, 'p'].some((c) => op.tokens[c] > 0);
     const picks = [...COLORS, 'p'].map((c) =>
       `<button class="pick t-${c}" data-c="${c}" ${op.tokens[c] ? '' : 'disabled'}>${op.tokens[c] || ''}</button>`).join('');
-    openSheet(`<h3>Steal a token from ${esc(op.name)}</h3><div class="pickrow">${picks}</div>`);
+    const skip = any ? '' : `<div class="sheetbtns"><button class="btn" id="stealSkip">Nothing to steal — continue</button></div>`;
+    openSheet(`<h3>Steal a token from ${esc(op.name)}</h3><div class="pickrow">${picks}</div>${skip}${refMarketHTML()}`);
     $('sheet').querySelectorAll('.pick').forEach((b) =>
       b.addEventListener('click', () => act({ type: 'resolve', resolve: { type: 'steal', color: b.dataset.c } })));
+    const sk = $('stealSkip');
+    if (sk) sk.addEventListener('click', () => act({ type: 'resolve', resolve: { type: 'steal' } }));
   } else if (p.type === 'royal') {
     const cards = S.royals.map((r, i) => royalHTML(r, `data-i="${i}"`)).join('');
     openSheet(`<h3>${IC('crown', 'i-gold')} Choose a royal card</h3><div class="sheetcards">${cards}</div>`);
@@ -921,7 +1168,7 @@ function renderPending() {
       <div class="sheetbtns">
         <button class="btn" id="dReset">Reset</button>
         <button class="btn primary" id="dGo" ${total === p.count ? '' : 'disabled'}>Discard</button>
-      </div>`);
+      </div>${refMarketHTML()}`);
     $('sheet').querySelectorAll('.pick').forEach((b) => b.addEventListener('click', () => {
       const c = b.dataset.c;
       if (Object.values(discardSel).reduce((a, x) => a + x, 0) < p.count && me.tokens[c] - discardSel[c] > 0) discardSel[c]++;
@@ -940,7 +1187,8 @@ function renderWin() {
   $('winOver').classList.toggle('on', over);
   if (!over) return;
   const w = S.players[S.winner];
-  $('winTitle').textContent = S.winner === mySeat ? 'You win!' : `${w.name} wins`;
+  $('winTitle').textContent = (local && local.mode === 'pass') ? `${w.name} wins!`
+    : S.winner === mySeat ? 'You win!' : `${w.name} wins`;
   const why = { points: `${w.points} prestige points`, crowns: `${w.crowns} crowns`, color: '10 points in one color' };
   $('winWhy').textContent = 'Victory by ' + why[S.winReason];
 }

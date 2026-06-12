@@ -1,6 +1,6 @@
 // Splendor Duel service worker: offline app shell + asset caching.
-const CACHE = 'splendor-duel-v1';
-const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'splendor-duel-v2';
+const SHELL = ['./', './index.html', './engine.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
