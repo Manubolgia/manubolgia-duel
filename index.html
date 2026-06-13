@@ -392,6 +392,7 @@
 
 <!-- ===================== HOME ===================== -->
 <div id="home" class="screen on">
+  <span id="verTag" style="position:absolute;top:10px;right:12px;color:#fff;font-size:11px;opacity:.65;letter-spacing:.5px"></span>
   <div class="logo"><span class="orn">◆</span>SPLENDOR DUEL<span class="orn">◆</span></div>
   <div class="tagline">Two players · One throne</div>
   <input id="name" class="field" maxlength="16" placeholder="Your name" autocomplete="off">
@@ -499,8 +500,10 @@
 // ============================================================================
 const WORKER_URL = 'https://splendor-duel.manuobelleiro00.workers.dev';
 
+const APP_VERSION = 'v4';
 const COLORS = ['w', 'u', 'g', 'r', 'k'];
 const GEM_NAMES = { w: 'White', u: 'Blue', g: 'Green', r: 'Red', k: 'Black', p: 'Pearl', o: 'Gold' };
+{ const vt = document.getElementById('verTag'); if (vt) vt.textContent = APP_VERSION; }
 
 // inline SVG icon (see the symbol defs at the top of <body>)
 const IC = (n, cls = '') => `<svg class="ic ${cls}"><use href="#i-${n}"/></svg>`;
