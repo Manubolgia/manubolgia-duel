@@ -127,6 +127,13 @@
   .tok.xs { width: 15px; height: 15px; font-size: 0; vertical-align: -.15em; }
   .tok.faded { opacity: .22; }
   .bonus { border-radius: 6px; }
+  .bonuschip { position: relative; display: inline-flex; }
+  .bonuschip .cpts { position: absolute; top: -5px; right: -5px; min-width: 13px; height: 13px; padding: 0 2px;
+         border-radius: 7px; font-size: 9px; font-weight: 800; line-height: 13px; text-align: center;
+         background: linear-gradient(180deg, var(--gold-hi), var(--gold) 60%, var(--gold-lo)); color: var(--gold-ink);
+         box-shadow: 0 1px 2px rgba(0, 0, 0, .5); border: 1px solid rgba(255, 236, 190, .6); }
+  .bonuschip .cpts.win { background: linear-gradient(180deg, #6ef0a0, #2fae66); color: #06301a;
+         border-color: rgba(150, 255, 200, .7); }
   .t-w { background: radial-gradient(circle at 35% 28%, #ffffff, #ebe6d8 48%, #b6ad99); color: #645c4b;
          text-shadow: 0 1px 0 rgba(255, 255, 255, .55); }
   .t-u { background: radial-gradient(circle at 35% 28%, #82b6ee, #2d6cc4 52%, #143a76); color: #fff; }
@@ -885,7 +892,7 @@ function cardHTML(card, extra = '') {
   if (!card) return `<div class="card empty"></div>`;
   if (card.hidden) return `<div class="card hiddenc back" ${extra}><div class="tier">${'I'.repeat(card.t)}</div><div class="cnt">hidden</div></div>`;
   const crowns = card.crowns ? Array(card.crowns).fill(IC('crown')).join('') : '';
-  const bns = card.b ? `<span class="tok sm bonus t-${card.b} bns"></span>` : '';
+  const bns = card.b ? `<span class="tok sm bonus t-${card.b} bns">${card.bv > 1 ? card.bv : ''}</span>` : '';
   const ab = card.ab ? `<div class="ab">${AB_LABEL[card.ab]}</div>` : '';
   const cost = Object.entries(card.cost || {}).filter(([, n]) => n > 0)
     .map(([c, n]) => `<span class="tok t-${c}">${n}</span>`).join('');
@@ -896,7 +903,7 @@ function cardHTML(card, extra = '') {
 
 function royalHTML(r, extra = '') {
   const ab = r.ab ? `<div class="ab">${AB_LABEL[r.ab]}</div>` : '';
-  return `<div class="card royal" ${extra}><div class="top"><span class="pts">${r.pts}</span><span class="crowns">${IC('crown')}</span></div>${ab}</div>`;
+  return `<div class="card royal" ${extra}><div class="top"><span class="pts">${r.pts}</span></div>${ab}</div>`;
 }
 
 function playerPanel(elId, seat) {
@@ -906,7 +913,14 @@ function playerPanel(elId, seat) {
   const el = $(elId);
   el.classList.toggle('active', S.phase === 'playing' && S.turn === seat);
   const toks = [...COLORS, 'p', 'o'].map((c) => tokHTML(c, p.tokens[c], p.tokens[c] ? '' : 'faded')).join('');
-  const bonuses = COLORS.filter((c) => p.bonus[c]).map((c) => tokHTML(c, p.bonus[c], 'bonus sm')).join('');
+  // Each owned color shows its discount count (the chip) plus a gold badge for
+  // its prestige points — the per-color total that drives the 10-in-a-color win.
+  const bonuses = COLORS.filter((c) => p.bonus[c]).map((c) => {
+    const pts = p.cardPts[c] || 0;
+    const badge = pts ? `<span class="cpts ${pts >= 10 ? 'win' : ''}">${pts}</span>` : '';
+    const title = `${p.bonus[c]} ${GEM_NAMES[c]} card${p.bonus[c] > 1 ? 's' : ''}, ${pts} pt${pts === 1 ? '' : 's'}`;
+    return `<span class="bonuschip" title="${title}">${tokHTML(c, p.bonus[c], 'bonus sm')}${badge}</span>`;
+  }).join('');
   el.innerHTML = `
     <div class="row1"><span class="dot ${online ? 'on' : ''}"></span>${esc(p.name)}${isMe ? ' (you)' : ''}
       <span class="stat"><span>${IC('star', 'i-gold')} <b>${p.points}</b></span><span>${IC('crown', 'i-gold')} <b>${p.crowns}</b></span><span>${IC('scroll', 'i-parch')} <b>${p.priv}</b></span></span>

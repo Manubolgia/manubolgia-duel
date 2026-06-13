@@ -16,7 +16,9 @@ const TOKEN_SUPPLY = { w: 4, u: 4, g: 4, r: 4, k: 4, p: 2, o: 3 }; // p=pearl, o
 // Board refill order: outward spiral from the center of the 5x5 grid.
 const SPIRAL = [12, 13, 18, 17, 16, 11, 6, 7, 8, 9, 14, 19, 24, 23, 22, 21, 20, 15, 10, 5, 0, 1, 2, 3, 4];
 
-// Royal cards: claimed at 3 crowns and again at 6 crowns.
+// Royal cards: claimed at 3 crowns and again at 6 crowns. Per the official
+// rules, royals carry NO crowns — crowns only ever come from jewel cards. They
+// grant prestige points and an ability.
 const ROYALS = [
   { id: 'R0', pts: 3, ab: null },
   { id: 'R1', pts: 2, ab: 'again' },
@@ -29,42 +31,110 @@ function others(c) {
   return [1, 2, 3, 4].map((d) => COLORS[(i + d) % 5]);
 }
 
-// Card abilities: 'take' = take a board token of the card's color,
-// 'steal' = take a token from the opponent, 'priv' = gain a privilege,
-// 'again' = play another turn. b: bonus color, 'x' = wild (assign to an
-// existing bonus color), null = no bonus.
+// Card abilities: 'take' = take a board token of the card's color ("take a 2nd
+// of the same gem"), 'steal' = take a token from the opponent, 'priv' = gain a
+// privilege, 'again' = play another turn. b: bonus color, 'x' = wild (assign to
+// an existing bonus color you own), null = no bonus. bv: bonus value (cards that
+// grant 2 of their color; defaults to 1).
+//
+// Card data is a faithful transcription of the official Splendor Duel card list
+// (Splendor_Duel_Card_List-v3). Cost color codes: p=pearl, k=black, r=red,
+// g=green, u=blue, w=white. Per-level totals: L1 30 cards / 11 pts / 6 crowns,
+// L2 24 / 37 / 9, L3 13 / 44 / 13.
 function buildDecks() {
   let id = 0;
-  const C = (cost, b, pts = 0, crowns = 0, ab = null) => ({ id: id++, cost, b, pts, crowns, ab });
-  const t1 = [], t2 = [], t3 = [];
-  for (const c of COLORS) {
-    const [o1, o2, o3] = others(c);
-    t1.push(C({ [o1]: 3 }, c));
-    t1.push(C({ [o1]: 2, [o2]: 2 }, c));
-    t1.push(C({ [o1]: 2, [o2]: 1, [o3]: 1 }, c));
-    t1.push(C({ [o2]: 2, p: 1 }, c, 0, 0, 'take'));
-    t1.push(C({ [o1]: 2, [o2]: 2, [o3]: 1 }, c, 1));
-    t1.push(C({ [o3]: 3, p: 1 }, c, 0, 1));
-  }
-  for (const c of COLORS) {
-    const [o1, o2, o3] = others(c);
-    t2.push(C({ [o1]: 4, [o2]: 2 }, c, 2));
-    t2.push(C({ [o1]: 3, [o2]: 2, p: 1 }, c, 1, 1));
-    t2.push(C({ [o1]: 4, [o2]: 3 }, c, 2, 0, 'steal'));
-    t2.push(C({ [o1]: 3, [o3]: 2, p: 1 }, c, 1, 0, 'priv'));
-  }
-  t2.push(C({ w: 3, u: 3, p: 1 }, 'x', 1));
-  t2.push(C({ g: 3, r: 3, p: 1 }, 'x', 1));
-  t2.push(C({ k: 3, w: 3, p: 1 }, 'x', 1));
-  t2.push(C({ u: 3, g: 3, p: 1 }, 'x', 1));
-  for (const c of COLORS) {
-    const [o1, o2, o3] = others(c);
-    t3.push(C({ [o1]: 5, [o2]: 3 }, c, 4));
-    t3.push(C({ [o1]: 4, [o2]: 2, [o3]: 2, p: 1 }, c, 3, 2, 'again'));
-  }
-  t3.push(C({ w: 2, u: 2, g: 2, r: 2, k: 2 }, null, 6));
-  t3.push(C({ r: 5, k: 3, p: 1 }, 'x', 5));
-  t3.push(C({ w: 4, g: 4, p: 1 }, 'x', 4, 0, 'steal'));
+  // (cost, bonus, pts, crowns, ability, bonusValue)
+  const C = (cost, b, pts = 0, crowns = 0, ab = null, bv = 1) => ({ id: id++, cost, b, pts, crowns, ab, bv });
+
+  const t1 = [
+    // Black bonus
+    C({ r: 1, g: 1, u: 1, w: 1 }, 'k'),
+    C({ p: 1, u: 2, w: 2 }, 'k', 0, 0, 'again'),
+    C({ r: 2, g: 2 }, 'k', 0, 0, 'take'),
+    C({ g: 3, u: 2 }, 'k', 1),
+    C({ w: 3 }, 'k', 0, 1),
+    // Red bonus
+    C({ k: 1, g: 1, u: 1, w: 1 }, 'r'),
+    C({ p: 1, k: 2, w: 2 }, 'r', 0, 0, 'again'),
+    C({ g: 2, u: 2 }, 'r', 0, 0, 'take'),
+    C({ u: 3, w: 2 }, 'r', 1),
+    C({ k: 3 }, 'r', 0, 1),
+    // Green bonus
+    C({ k: 1, r: 1, u: 1, w: 1 }, 'g'),
+    C({ p: 1, k: 2, r: 2 }, 'g', 0, 0, 'again'),
+    C({ u: 2, w: 2 }, 'g', 0, 0, 'take'),
+    C({ k: 2, w: 3 }, 'g', 1),
+    C({ r: 3 }, 'g', 0, 1),
+    // Blue bonus
+    C({ k: 1, r: 1, g: 1, w: 1 }, 'u'),
+    C({ p: 1, r: 2, g: 2 }, 'u', 0, 0, 'again'),
+    C({ k: 2, w: 2 }, 'u', 0, 0, 'take'),
+    C({ k: 3, r: 2 }, 'u', 1),
+    C({ g: 3 }, 'u', 0, 1),
+    // White bonus
+    C({ k: 1, r: 1, g: 1, u: 1 }, 'w'),
+    C({ p: 1, g: 2, u: 2 }, 'w', 0, 0, 'again'),
+    C({ k: 2, r: 2 }, 'w', 0, 0, 'take'),
+    C({ k: 3, r: 2 }, 'w', 1),
+    C({ u: 3 }, 'w', 0, 1),
+    // Specials
+    C({ p: 1, r: 4 }, null, 3),
+    C({ p: 1, k: 4 }, 'x', 1),
+    C({ p: 1, w: 4 }, 'x', 0, 1),
+    C({ p: 1, k: 1, g: 2, w: 2 }, 'x', 1),
+    C({ p: 1, k: 1, r: 2, u: 2 }, 'x', 1),
+  ];
+
+  const t2 = [
+    // Black bonus
+    C({ g: 3, w: 4 }, 'k', 1, 0, 'steal'),
+    C({ u: 2, w: 5 }, 'k', 1, 0, null, 2),
+    C({ p: 1, r: 2, g: 2, u: 2 }, 'k', 2, 1),
+    C({ p: 1, k: 4, r: 2 }, 'k', 2, 0, 'priv'),
+    // Red bonus
+    C({ k: 4, u: 3 }, 'r', 1, 0, 'steal'),
+    C({ k: 5, w: 2 }, 'r', 1, 0, null, 2),
+    C({ p: 1, g: 2, u: 2, w: 2 }, 'r', 2, 1),
+    C({ p: 1, r: 4, g: 2 }, 'r', 2, 0, 'priv'),
+    // Green bonus
+    C({ r: 4, w: 3 }, 'g', 1, 0, 'steal'),
+    C({ k: 2, r: 5 }, 'g', 1, 0, null, 2),
+    C({ p: 1, k: 2, u: 2, w: 2 }, 'g', 2, 1),
+    C({ p: 1, g: 4, u: 2 }, 'g', 2, 0, 'priv'),
+    // Blue bonus
+    C({ k: 3, r: 4 }, 'u', 1, 0, 'steal'),
+    C({ r: 2, g: 5 }, 'u', 1, 0, null, 2),
+    C({ p: 1, k: 2, r: 2, w: 2 }, 'u', 2, 1),
+    C({ p: 1, u: 4, w: 2 }, 'u', 2, 0, 'priv'),
+    // White bonus
+    C({ k: 3, r: 4 }, 'w', 1, 0, 'steal'),
+    C({ g: 2, u: 5 }, 'w', 1, 0, null, 2),
+    C({ p: 1, k: 2, r: 2, g: 2 }, 'w', 2, 1),
+    C({ p: 1, k: 2, w: 4 }, 'w', 2, 0, 'priv'),
+    // Specials
+    C({ p: 1, u: 6 }, null, 5),
+    C({ p: 1, g: 6 }, 'x', 2),
+    C({ p: 1, g: 6 }, 'x', 0, 2),
+    C({ p: 1, u: 6 }, 'x', 0, 2),
+  ];
+
+  const t3 = [
+    C({ p: 1, r: 3, g: 5, w: 3 }, 'k', 3, 2),
+    C({ k: 6, r: 2, w: 2 }, 'k', 4),
+    C({ p: 1, k: 3, g: 3, u: 5 }, 'r', 3, 2),
+    C({ k: 2, r: 6, g: 2 }, 'r', 4),
+    C({ p: 1, r: 3, u: 3, w: 5 }, 'g', 3, 2),
+    C({ r: 2, g: 6, u: 2 }, 'g', 4),
+    C({ p: 1, k: 5, g: 3, w: 3 }, 'u', 3, 2),
+    C({ r: 2, u: 6, w: 2 }, 'u', 4),
+    C({ p: 1, k: 3, r: 5, u: 3 }, 'w', 3, 2),
+    C({ k: 2, u: 2, w: 6 }, 'w', 4),
+    // Specials
+    C({ w: 8 }, null, 6),
+    C({ k: 8 }, 'x', 0, 3),
+    C({ r: 8 }, 'x', 3, 0, 'again'),
+  ];
+
   t1.forEach((x) => (x.t = 1));
   t2.forEach((x) => (x.t = 2));
   t3.forEach((x) => (x.t = 3));
@@ -207,7 +277,7 @@ function applyCardEffects(st, seat, card) {
   } else if (card.b === null) {
     me.points += card.pts;
   } else {
-    me.bonus[card.b]++;
+    me.bonus[card.b] += card.bv || 1;
     me.cardPts[card.b] += card.pts;
     me.points += card.pts;
   }
