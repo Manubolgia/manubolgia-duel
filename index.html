@@ -151,9 +151,10 @@
   .t-r { background: radial-gradient(circle at 35% 28%, #f08576, #c5332e 52%, #6e1715); color: #fff; }
   .t-k { background: radial-gradient(circle at 35% 28%, #5d6671, #23272e 56%, #0a0c0f); color: #d3d8de;
          border-color: rgba(255, 255, 255, .25); }
-  .t-p { background: linear-gradient(125deg, rgba(150, 208, 255, .28), rgba(255, 178, 220, .25) 50%, rgba(190, 250, 215, .22)),
-                     radial-gradient(circle at 35% 28%, #ffffff, #f1dce8 40%, #cdb0d6 64%, #97799f);
-         color: #79566f; text-shadow: 0 1px 0 rgba(255, 255, 255, .5); }
+  .t-p { background: linear-gradient(135deg, #f7e0ed, #e6c5ee 40%, #b2c5eb 75%, #a6e6e6);
+         color: #5a3c63; text-shadow: 0 1px 0 rgba(255, 255, 255, .6);
+         box-shadow: inset 0 0 0 1px rgba(210, 150, 200, .3), inset 0 .1em .15em rgba(255, 255, 255, .4),
+                     inset 0 -.2em .3em rgba(0, 0, 0, .2), 0 .1em .25em rgba(0, 0, 0, .5); }
   .t-o { background: radial-gradient(circle at 35% 28%, #ffeebb, #e0b350 56%, #92671a); color: #4e3706;
          text-shadow: 0 1px 0 rgba(255, 240, 190, .5);
          box-shadow: inset 0 0 0 2px rgba(120, 82, 12, .3), inset 0 .1em .15em rgba(255, 255, 255, .35),
@@ -318,7 +319,8 @@
   .roomitem { display: flex; align-items: center; gap: 6px;
               background: linear-gradient(170deg, #171d28, #121620);
               border: 1px solid var(--line); border-radius: 14px; padding: 8px 6px 8px 14px;
-              box-shadow: 0 1px 4px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .04); }
+              box-shadow: 0 1px 4px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .04); transition: border-color 0.2s, box-shadow 0.2s; }
+  .roomitem.your-turn { border-color: rgba(217, 184, 108, .5); box-shadow: 0 0 12px rgba(217, 184, 108, .15), inset 0 1px 0 rgba(255, 255, 255, .04); }
   .roomitem .rinfo { flex: 1; min-width: 0; text-align: left; padding: 2px 0; }
   .roomitem .rvs { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .roomitem .rmeta { font-size: 12px; color: var(--dim); margin-top: 2px; }
@@ -518,7 +520,7 @@
 // ============================================================================
 const WORKER_URL = 'https://splendor-duel.manuobelleiro00.workers.dev';
 
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 const COLORS = ['w', 'u', 'g', 'r', 'k'];
 const GEM_NAMES = { w: 'White', u: 'Blue', g: 'Green', r: 'Red', k: 'Black', p: 'Pearl', o: 'Gold' };
 { const vt = document.getElementById('verTag'); if (vt) vt.textContent = APP_VERSION; }
@@ -685,7 +687,7 @@ function renderRooms() {
         : r.turn === 'me' ? '<span class="rturn me">your turn</span>'
         : r.turn === 'them' ? '<span class="rturn">their turn</span>'
         : '<span class="rturn">waiting</span>';
-      return `<div class="roomitem">
+      return `<div class="roomitem ${r.turn === 'me' ? 'your-turn' : ''}">
         <button class="rinfo" data-join="${it.key}">
           <div class="rvs">${r.opp ? 'vs ' + esc(r.opp) : 'Waiting for opponent'}</div>
           <div class="rmeta"><span class="rcode">${it.key}</span> · online</div>
@@ -696,12 +698,14 @@ function renderRooms() {
     const g = it.g;
     const over = g.st.phase === 'over';
     const tag = g.mode === 'ai' ? '<span class="rbadge ai">AI</span>' : '<span class="rbadge">pass &amp; play</span>';
+    const myTurn = !over && (g.mode === 'ai' ? g.st.turn === 0 : true); // Highlight pass & play too if active
+    const isYourTurn = !over && (g.mode === 'ai' ? g.st.turn === 0 : false);
     const badge = over ? '<span class="rturn">finished</span>'
       : g.mode === 'ai'
         ? (g.st.turn === 0 ? '<span class="rturn me">your turn</span>' : '<span class="rturn">AI turn</span>')
         : `<span class="rturn me">${esc(g.names[g.st.turn])}</span>`;
     const label = g.mode === 'ai' ? 'vs ' + esc(g.names[1]) : esc(g.names[0]) + ' vs ' + esc(g.names[1]);
-    return `<div class="roomitem">
+    return `<div class="roomitem ${isYourTurn ? 'your-turn' : ''}">
       <button class="rinfo" data-local="${it.key}">
         <div class="rvs">${label} ${tag}</div>
         <div class="rmeta">offline · on this device</div>
@@ -1213,7 +1217,13 @@ function refMarketHTML() {
   }).join('') + `</div>`;
   const res = me.reserved.length
     ? `<div class="seclabel"><span>Your reserved</span></div>` + row(me.reserved) : '';
-  return `<div class="refbox">${res}
+  
+  const myBonuses = COLORS.filter((c) => me.bonus[c]).map((c) => {
+    return `<span class="bonuschip">${tokHTML(c, me.bonus[c], 'bonus sm')}</span>`;
+  }).join('');
+  const bonusRow = myBonuses ? `<div class="seclabel"><span>Your discounts</span></div><div class="tokrow" style="padding:0 2px 6px">${myBonuses}</div>` : '';
+
+  return `<div class="refbox">${bonusRow}${res}
     <div class="seclabel"><span>Cards on the table</span></div>
     ${row(S.open[3])}${row(S.open[2])}${row(S.open[1])}</div>`;
 }
