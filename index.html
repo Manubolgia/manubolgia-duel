@@ -24,8 +24,8 @@
     --accent: #d9b86c; --accent2: #4f86c6;
     --good: #46c97a; --bad: #e05252;
     --serif: 'Cinzel', Georgia, 'Times New Roman', serif;
-    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
-    --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+    --sat: var(--mnbg-safe-top, env(safe-area-inset-top, 0px)); --sab: var(--mnbg-safe-bottom, env(safe-area-inset-bottom, 0px));
+    --sal: var(--mnbg-safe-left, env(safe-area-inset-left, 0px)); --sar: var(--mnbg-safe-right, env(safe-area-inset-right, 0px));
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
   html, body { margin: 0; padding: 0; background: #07090d; color: var(--text); overscroll-behavior: none; }
@@ -1318,6 +1318,8 @@ $('rulesBtn').addEventListener('click', showRules);
 // it, the home screen offers a way back.
 if (window.parent !== window && window.name === 'mnbglibrary') {
   $('libraryBtn').hidden = false;
+  // Tell the library we have our own way back, so it can hide its eject tab.
+  window.parent.postMessage({ type: 'mnbglibrary:hello', exit: true }, location.origin);
   $('libraryBtn').addEventListener('click', () => window.parent.postMessage({ type: 'mnbglibrary:eject' }, location.origin));
 }
 $('rulesBack').addEventListener('click', () => {
