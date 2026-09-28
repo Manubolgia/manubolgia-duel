@@ -425,6 +425,7 @@
     <div id="roomsList" style="display:flex;flex-direction:column;gap:8px"></div>
   </div>
   <button id="rulesBtn" class="btn" style="margin-top:6px"><svg class="ic i-gold"><use href="#i-book"/></svg> Rulebook</button>
+  <button id="libraryBtn" class="btn" hidden>Back to the library</button>
 </div>
 
 <!-- ===================== GAME ===================== -->
@@ -1313,6 +1314,12 @@ function showRules() {
   scrollTo(0, 0);
 }
 $('rulesBtn').addEventListener('click', showRules);
+// The MNBG tape library runs its games in a frame named "mnbglibrary"; inside
+// it, the home screen offers a way back.
+if (window.parent !== window && window.name === 'mnbglibrary') {
+  $('libraryBtn').hidden = false;
+  $('libraryBtn').addEventListener('click', () => window.parent.postMessage({ type: 'mnbglibrary:eject' }, location.origin));
+}
 $('rulesBack').addEventListener('click', () => {
   $('rules').classList.remove('on');
   $('home').classList.add('on');
